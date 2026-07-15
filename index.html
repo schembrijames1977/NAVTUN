@@ -20,10 +20,9 @@
         .telemetry { position: absolute; top: 10px; right: 10px; z-index: 1000; background: rgba(15, 23, 42, 0.85); color: #0ea5e9; padding: 10px; border-radius: 8px; font-family: monospace; font-size: 12px; border: 1px solid #0284c7; }
         .telemetry span { color: white; font-weight: bold; }
         
-        /* Zone d'import de cartes MBTiles */
         .mbtiles-ctrl { position: absolute; top: 10px; left: 10px; z-index: 1000; background: rgba(15, 23, 42, 0.85); padding: 10px; border-radius: 8px; border: 1px solid #334155; color: white; font-size: 11px; }
         .mbtiles-ctrl input { display: none; }
-        .mbtiles-label { background: #0284c7; padding: 5px 10px; border-radius: 4px; cursor pointer: display: inline-block; font-weight: bold; }
+        .mbtiles-label { background: #0284c7; padding: 5px 10px; border-radius: 4px; cursor: pointer; display: inline-block; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -54,44 +53,49 @@
     <script src="https://unpkg.com/leaflet.tilelayer.mbtiles@0.1.0/Leaflet.TileLayer.MBTiles.js"></script>
 
     <script>
-        // Enregistrement du Service Worker pour le mode Hors-ligne
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js')
-            .then(() => console.log('Service Worker Enregistré avec succès.'))
-            .catch(err => console.error('Échec enregistrement SW', err));
+            .then(() => console.log('Service Worker Enregistré'))
+            .catch(err => console.error(err));
         }
 
-        // Initialisation de la carte (Centrée sur la Tunisie - Tunis / Bizerte)
         const map = L.map('map', { center: [37.05, 10.15], zoom: 9, zoomControl: false });
-
-        // Cartes en ligne par défaut
         const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-        // Gestionnaire d'importation MBTiles
+        // Version optimisée pour gros fichiers MBTiles
         document.getElementById('mbtiles-upload').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (!file) return;
 
-            document.getElementById('mbtiles-status').innerText = "Chargement " + file.name;
+            document.getElementById('mbtiles-status').innerText = "Lecture de " + file.name + "...";
+            document.getElementById('mbtiles-status').style.color = "#eab308"; // Couleur orange pendant le travail
             
-            // Initialisation de SQL.js pour lire le fichier .mbtiles
-            initSqlJs({ locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}` }).then(function(SQL){
-                const reader = new FileReader();
-                reader.onload = function() {
-                    const Uints = new Uint8Array(reader.result);
-                    
-                    // Suppression des couches en ligne
-                    map.eachLayer(layer => { if(layer !== userMarker && layer !== polyline) map.removeLayer(layer); });
-                    
-                    // Ajout du calque MBTiles local
-                    const mbtilesLayer = L.tileLayer.mbTiles(Uints, { maxZoom: 15, minZoom: 4 }).addTo(map);
-                    document.getElementById('mbtiles-status').innerText = "✔️ " + file.name + " actif";
-                };
-                reader.readAsArrayBuffer(file);
-            });
+            const reader = new FileReader();
+            reader.onload = function() {
+                try {
+                    initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${f}` }).then(function(SQL){
+                        const Uints = new Uint8Array(reader.result);
+                        
+                        // Nettoyage des anciennes couches
+                        map.eachLayer(layer => { if(layer !== userMarker && layer !== polyline) map.removeLayer(layer); });
+                        
+                        // Chargement de la couche locale
+                        const mbtilesLayer = L.tileLayer.mbTiles(Uints, { maxZoom: 15, minZoom: 4 }).addTo(map);
+                        
+                        document.getElementById('mbtiles-status').innerText = "✔️ " + file.name + " actif";
+                        document.getElementById('mbtiles-status').style.color = "#22c55e"; // Vert d'activation
+                    });
+                } catch (error) {
+                    document.getElementById('mbtiles-status').innerText = "❌ Erreur de mémoire. Fichier trop lourd.";
+                    document.getElementById('mbtiles-status').style.color = "#ef4444";
+                }
+            };
+            
+            // On lance la lecture
+            reader.readAsArrayBuffer(file);
         });
 
-        // --- CODE GPS ET GEOLOCALISATION ---
+        // --- GPS ---
         let watchId = null, userMarker = null, isTracking = false, trackPath = [];
         let polyline = L.polyline([], {color: '#00e5ff', weight: 4}).addTo(map);
 
@@ -109,9 +113,7 @@
             const currentPos = [lat, lon];
             if (!userMarker) {
                 userMarker = L.circleMarker(currentPos, { radius: 8, fillColor: '#2563eb', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(map);
-            } else {
-                userMarker.setLatLng(currentPos);
-            }
+            } else { userMarker.setLatLng(currentPos); }
 
             if (isTracking) {
                 map.setView(currentPos, map.getZoom());
