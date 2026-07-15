@@ -1,0 +1,144 @@
+!DOCTYPE html
+html lang=fr
+head
+    meta charset=UTF-8
+    meta name=viewport content=width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no 
+    titleTN Marine Navigatortitle
+    
+    link rel=manifest href=manifest.json
+    meta name=theme-color content=#0f172a
+    
+    link rel=stylesheet href=httpsunpkg.comleaflet@1.9.4distleaflet.css 
+    
+    style
+        body, html { margin 0; padding 0; height 100%; width 100%; font-family Arial, sans-serif; background-color #0f172a; }
+        #map { height 100%; width 100%; position absolute; top 0; bottom 0; }
+        .nav-panel { position absolute; bottom 20px; left 50%; transform translateX(-50%); z-index 1000; background rgba(20, 25, 35, 0.9); border 1px solid #334155; border-radius 15px; padding 12px 20px; display flex; gap 15px; box-shadow 0 4px 20px rgba(0,0,0,0.5); backdrop-filter blur(5px); }
+        .nav-btn { background #2563eb; color white; border none; padding 10px 15px; border-radius 8px; font-weight bold; font-size 14px; cursor pointer; }
+        .nav-btnactive { background #1d4ed8; }
+        .nav-btn.secondary { background #475569; }
+        .telemetry { position absolute; top 10px; right 10px; z-index 1000; background rgba(15, 23, 42, 0.85); color #0ea5e9; padding 10px; border-radius 8px; font-family monospace; font-size 12px; border 1px solid #0284c7; }
+        .telemetry span { color white; font-weight bold; }
+        
+         Zone d'import de cartes MBTiles 
+        .mbtiles-ctrl { position absolute; top 10px; left 10px; z-index 1000; background rgba(15, 23, 42, 0.85); padding 10px; border-radius 8px; border 1px solid #334155; color white; font-size 11px; }
+        .mbtiles-ctrl input { display none; }
+        .mbtiles-label { background #0284c7; padding 5px 10px; border-radius 4px; cursor pointer; display inline-block; font-weight bold; }
+    style
+head
+body
+
+    div id=mapdiv
+
+    div class=mbtiles-ctrl
+        span style=displayblock; margin-bottom5px;📁 Carte Hors-Ligne (.mbtiles) span
+        label for=mbtiles-upload class=mbtiles-labelCharger une zonelabel
+        input type=file id=mbtiles-upload accept=.mbtiles
+        div id=mbtiles-status style=margin-top5px; color#a1a1aa;Aucun fichierdiv
+    div
+
+    div class=telemetry
+        divSOG (Vitesse) span id=speed0.0span kndiv
+        divCOG (Cap) span id=heading---span°div
+        divLat span id=lat0.0000spandiv
+        divLon span id=lon0.0000spandiv
+    div
+
+    div class=nav-panel
+        button class=nav-btn id=trackBtn📍 Suivi GPS  OFFbutton
+        button class=nav-btn secondary id=wpBtn⚓ Waypointbutton
+    div
+
+    script src=httpsunpkg.comleaflet@1.9.4distleaflet.jsscript
+    script src=httpscdnjs.cloudflare.comajaxlibssql.js1.8.0sql-wasm.jsscript
+    script src=httpsunpkg.comleaflet.tilelayer.mbtiles@0.1.0Leaflet.TileLayer.MBTiles.jsscript
+
+    script
+         Enregistrement du Service Worker pour le mode Hors-ligne
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+            .then(() = console.log('Service Worker Enregistré avec succès.'))
+            .catch(err = console.error('Échec enregistrement SW', err));
+        }
+
+         Initialisation de la carte (Centrée sur la Tunisie  Tunis  Bizerte)
+        const map = L.map('map', { center [37.05, 10.15], zoom 9, zoomControl false });
+
+         Cartes en ligne par défaut (seront mises en cache par le SW au fur et à mesure)
+        const osm = L.tileLayer('https{s}.tile.openstreetmap.org{z}{x}{y}.png').addTo(map);
+        const seamap = L.tileLayer('httpstiles.openseamap.orgseamark{z}{x}{y}.png').addTo(map);
+
+         Gestionnaire d'importation MBTiles (Base de données locale)
+        document.getElementById('mbtiles-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            document.getElementById('mbtiles-status').innerText = Chargement   + file.name;
+            
+             Initialisation de SQL.js pour lire le fichier SQLite .mbtiles
+            initSqlJs({ locateFile file = `httpscdnjs.cloudflare.comajaxlibssql.js1.8.0${file}` }).then(function(SQL){
+                const reader = new FileReader();
+                reader.onload = function() {
+                    const Uints = new Uint8Array(reader.result);
+                     Suppression des couches en ligne pour basculer sur le fichier local
+                    map.eachLayer(layer = { if(layer !== userMarker && layer !== polyline) map.removeLayer(layer); });
+                    
+                     Ajout du calque MBTiles local
+                    const mbtilesLayer = L.tileLayer.mbTiles(Uints, { maxZoom 14, minZoom 4 }).addTo(map);
+                    document.getElementById('mbtiles-status').innerText = ✔️  + file.name +  actif;
+                };
+                reader.readAsArrayBuffer(file);
+            });
+        });
+
+         --- CODE GPS ET GEOLOCALISATION ---
+        let watchId = null, userMarker = null, isTracking = false, trackPath = [];
+        let polyline = L.polyline([], {color '#00e5ff', weight 4}).addTo(map);
+
+        function updateLocation(position) {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+            const speed = position.coords.speed  (position.coords.speed  1.94384).toFixed(1)  0.0;
+            const heading = position.coords.heading  position.coords.heading.toFixed(0)  ---;
+
+            document.getElementById('lat').innerText = lat.toFixed(4);
+            document.getElementById('lon').innerText = lon.toFixed(4);
+            document.getElementById('speed').innerText = speed;
+            document.getElementById('heading').innerText = heading;
+
+            const currentPos = [lat, lon];
+            if (!userMarker) {
+                userMarker = L.circleMarker(currentPos, { radius 8, fillColor '#2563eb', color '#fff', weight 2, fillOpacity 1 }).addTo(map);
+            } else {
+                userMarker.setLatLng(currentPos);
+            }
+
+            if (isTracking) {
+                map.setView(currentPos, map.getZoom());
+                trackPath.push(currentPos);
+                polyline.setLatLngs(trackPath);
+            }
+        }
+
+        document.getElementById('trackBtn').addEventListener('click', () = {
+            if (!isTracking) {
+                watchId = navigator.geolocation.watchPosition(updateLocation, (err) = console.log(err), { enableHighAccuracy true });
+                isTracking = true;
+                document.getElementById('trackBtn').innerText = 📍 Suivi GPS  ON;
+                document.getElementById('trackBtn').style.background = #22c55e;
+            } else {
+                navigator.geolocation.clearWatch(watchId);
+                isTracking = false;
+                document.getElementById('trackBtn').innerText = 📍 Suivi GPS  OFF;
+                document.getElementById('trackBtn').style.background = #2563eb;
+            }
+        });
+
+        document.getElementById('wpBtn').addEventListener('click', () = {
+            const center = map.getCenter();
+            const name = prompt(Nom du spot , WP_ + Date.now().toString().slice(-4));
+            if (name) { L.marker(center).addTo(map).bindPopup(`b${name}b`).openPopup(); }
+        });
+    script
+body
+html
